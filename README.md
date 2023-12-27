@@ -1,5 +1,5 @@
 # A Cloud P2P environment for  controlled sharing of images 
-Link to repo: https://github.com/nada-dev/Instagram-Distributed-.git
+Link to repo: https://github.com/nada-dev/Instagram-Distributed.git
 
 
 ## Project Description
