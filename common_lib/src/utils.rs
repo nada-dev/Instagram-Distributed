@@ -69,7 +69,9 @@ fn encodeimage(cover_image: DynamicImage, secret_image: DynamicImage) -> Dynamic
 
 
 // This
-pub fn send_image_to_client( client_addr: &SocketAddr, image_path: &str) -> io::Result<()> {   
+pub fn send_image_to_client( client_addr: &SocketAddr, image_path: &str) -> io::Result<()> {
+  // println!(" client socket = {}", format!("{}:{}", client_addr.ip(), client_addr.port()));
+   
    let socket = UdpSocket::bind(format!("0.0.0.0:{}", client_addr.port())).expect("Failed to bind socket");
    let file = File::open(image_path).expect("This image is not Encoded");
     let mut buf_reader = BufReader::new(file);
@@ -85,18 +87,23 @@ pub fn send_image_to_client( client_addr: &SocketAddr, image_path: &str) -> io::
         packet.extend_from_slice(&i.to_be_bytes()); // Add sequence number as header
         packet.extend_from_slice(chunk);
 
+        //println!("{:?}",socket);
+
         loop {
             socket.send_to(&packet, client_addr)?;
             let mut ack_buffer = [0; HEADER_SIZE];
             match socket.recv_from(&mut ack_buffer) {
                 Ok(_) => {
                     let ack_seq_number = usize::from_be_bytes(ack_buffer.try_into().unwrap());
+                    //println!("Ach seq = {}", ack_seq_number);
                     if ack_seq_number == i {
+                               //println!("Number == i");
                             break; // Correct ACK received, proceed to next chunk
                             }
                      }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                     // Timeout; ACK not received, resend the packet
+                                    //println!("Number not recieved ");
                                     continue;
                                    }
                 Err(e) => return Err(e), // Some other error
@@ -123,8 +130,16 @@ pub fn receive_image_to_encode(socket: &UdpSocket , src_addr: &SocketAddr)  {
     let mut first_packet = true;
 
     while !end_of_transmission_received {
+       // println!("Waiting for data...");
         match socket.recv_from(&mut buffer) {
             Ok((size,_)) => {
+               //println!("Received data: {} bytes", size);
+                // Check if the size of received data is less than HEADER_SIZE
+               //  if size < HEADER_SIZE {
+               //     println!("Data size less than HEADER_SIZE, continuing...");
+               //      continue;
+               //  }
+
                 let sequence_number = match buffer[..HEADER_SIZE].try_into() {
                     Ok(bytes) => usize::from_be_bytes(bytes),
                     Err(e) => {
@@ -176,7 +191,9 @@ pub fn receive_image_to_encode(socket: &UdpSocket , src_addr: &SocketAddr)  {
    println!("Image Saved");
 
     // Load the secret image you want to hide
-    let secret_image: DynamicImage = open(&output_file_name).expect("Secret image not found");    
+    let secret_image: DynamicImage = open(&output_file_name).expect("Secret image not found");
+    //println!("Secret Image Uploaded");
+    
     let cover_image_path = "cover.png";
     let cover_image = match open(cover_image_path) {
         Ok(img) => img,
@@ -186,15 +203,19 @@ pub fn receive_image_to_encode(socket: &UdpSocket , src_addr: &SocketAddr)  {
         }
     };
 
+    //println!("Cover Image Uploaded");
     // Convert the secret image to bytes
     let mut secret_image_bytes = Cursor::new(Vec::new());
     secret_image.write_to(&mut secret_image_bytes, ImageOutputFormat::PNG).expect("Failed to write secret image to bytes");
     let secret_image_bytes = secret_image_bytes.into_inner();
 
+    //println!("Secret Image Fragmented");
     // Create an Encoder instance
     let encoder = Encoder::new(&secret_image_bytes, cover_image);
+    //println!("Encoder created");
     // Encode the secret into the cover image
     let encoded_image = encoder.encode_alpha(); // Adjust this according to the actual encode method signature
+    //println!("Encoder image created");
     // Get the dimensions of the image and save the encoded image
     let (width, height) = encoded_image.dimensions();
     let img = DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, encoded_image.to_vec()).unwrap());
@@ -207,6 +228,7 @@ pub fn receive_image_to_encode(socket: &UdpSocket , src_addr: &SocketAddr)  {
     println!("done Encoding \n");
 
     let src= format!("{}:{}", src_addr.ip(), src_addr.port() + 1).parse::<SocketAddr>().expect("Failed to parse server address");
+   //  println!("{}", format!("{}:{}", src_addr.ip(), src_addr.port() + 1));
     
     let values :i32 = 55;
     let message = values.to_be_bytes();
@@ -304,11 +326,29 @@ pub fn working_token_handle(off_server: Arc<Mutex<i32>>, work_flag: Arc<Mutex<bo
         let mut work_token = work_flag.lock().unwrap();
         *work_token = true;
         drop(work_token);
+        println!("I am working now yaaaaay");
         thread::sleep(Duration::from_millis(500 as u64));
         work_token = work_flag.lock().unwrap();
         *work_token = false;
         drop(work_token);
-        token_socket.send_to(msg.as_bytes(), format!("{}:{}", servers[next_add as usize], token_port)).expect("Failed to send message");
+        //println!("Released work token ^^)");
+
+        // checking next server:
+        // let off_server_id = off_server.lock();
+        // match off_server_id {
+        //     Ok(off_id) => {
+        //         if *off_id == next_add {
+                    // token_socket.send_to(msg.as_bytes(), format!("{}:{}", servers[next_next_add as usize], token_port)).expect("Failed to send message");
+        //         }
+        //         else {
+                    token_socket.send_to(msg.as_bytes(), format!("{}:{}", servers[next_add as usize], token_port)).expect("Failed to send message");
+        //         }
+        //     }
+        //     Err(e) => {
+        //         // Handle the error if lock cannot be acquired (e.g., if another thread has panicked while holding the lock)
+        //         println!("Failed to acquire the lock: {:?}", e);
+        //     }
+        // }
     }
 }
 
@@ -332,6 +372,7 @@ pub fn who_offline_handler(off_server: Arc<Mutex<i32>>) {
         socket.recv_from(&mut buffer).expect("Failed to receive message");
         let mut off_server_id = off_server.lock().unwrap();
         *off_server_id = i32::from_be_bytes(buffer);
+        // println!("Sleep server is: {}", off_server_id);
     }
 }
 
@@ -350,6 +391,7 @@ pub fn handle_requests_v2(
         let (size, src_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
         message = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
         if message == "Request" {
+            println!("received message!");
             let work_token = work_flg.lock().unwrap();
             let offline_token = offline_flg.lock().unwrap();
             if *work_token == true {
@@ -357,9 +399,17 @@ pub fn handle_requests_v2(
                 // send back to the client
                 let ack_message =(id).to_be_bytes();
                 let _ = socket.send_to(&ack_message, &src_addr);
+                println!("ID sent {}",id);
                 receive_image_to_encode(&socket , &src_addr );
+                // println!("Handling request: {}", message);
             }
+            // else if *offline_token == true{
+            //     drop(offline_token);
+            //     println!("Offline at {}",message);
+            //     send_offline (servers[id as usize], online_servers);
+            // }
             else {
+                println!("not working");
                 continue;
             }
         }
@@ -428,8 +478,10 @@ pub fn store_in_dos(dos_map: Arc<Mutex<HashMap<String, bool>>>, off_map: Arc<Mut
         let mut dos_map = dos_map.lock().unwrap();
         if message.starts_with("OFFLINE:") {
             let offline_client_ip = message.replace("OFFLINE:", "");
+            println!("Offline: {}", offline_client_ip);
             dos_map.insert(offline_client_ip, false); // Set client status to offline
         } else {
+            println!("stored: {}", message);
             dos_map.insert(message.clone(), true); // Store new IP or update existing client's online status
 
             //check if in map , if yes update client views 
@@ -463,14 +515,17 @@ pub fn store_in_dos_off_for_views(dos_map: Arc<Mutex<HashMap<String, bool>>>,off
         let mut dos_map = dos_map.lock().unwrap();
         let offline_client_ip = message.replace("OFFLINE:", "");//ClientIP_MyIP_Id_views
         let cip_ip_id_view: Vec<String> = offline_client_ip.split('_').map(|s| s.to_string()).collect();
+        println!("stored in dos: {}", cip_ip_id_view[0]);
         dos_map.insert(cip_ip_id_view[0].clone(), false); // Set client status to offline
        
         let ip_id_view=format!("{}:{}_{}",cip_ip_id_view[1],cip_ip_id_view[2],cip_ip_id_view[3]);
         let mut off_map = off_map.lock().unwrap();
+        println!("stored in off: {} - {}", cip_ip_id_view[0], ip_id_view);
         off_map.insert(cip_ip_id_view[0].clone(),ip_id_view);
+
+        //create map 
     }
 }
-
 // server respond who's online
 pub fn send_who_online(dos_map: Arc<Mutex<HashMap<String, bool>>>){
     let dos_port: i32 = 8888;
@@ -518,6 +573,33 @@ pub fn convert_to_low_resolution(image_name: &str, new_width: u32, new_height: u
     resized.save(output_file_name).unwrap();
 }
 
+// client 1 (requester)
+// 1. send msg to view imags --> "view all" 
+//      listening for recieving low res
+//      choose img ID to view
+//      send ID to client
+//      listen for number of views
+//      listen for recieve of high res
+//      recive it and save encrypted
+//      prompt to view image or send another client.
+//          view image:
+// ...........................................................
+//              check num of views -- decrypt -- view image
+//          send another client -- continue
+// and loop: 
+//      client to view the image --> enter v
+//      each time to have v --> decrement
+
+// source IP client --> pair (img ID, number of views)
+
+// client 2
+// 2. listing for "view all"
+//      send low resolution images
+//      listening for ID
+//      send number of views
+//      send encoded img
+//      send image
+
 pub fn notify_server_client_offline(client_ip: String, servers: [&str; 3]) -> io::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     let message = format!("OFFLINE:{}", client_ip);
@@ -538,7 +620,44 @@ pub fn notify_server_client_offline_for_views(client_ip: String, servers: [&str;
     Ok(())
 }
 
+//Those 
+// support multithreading
 
+
+
+
+
+/* 
+pub fn send_my_img () {
+let imgs_port: i32 = 9999;
+let mut buffer = [0; 512];
+println!("Waiting for requests");
+let socket = UdpSocket::bind(format!("0.0.0.0:{}", imgs_port)).expect("Failed to bind dos socket");
+let (size, src_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
+let view_msg = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
+
+if view_msg == "view all".to_string() {
+    println!("view request from {}!", src_addr);
+    //send dynamic port to handle comminication
+    for i in 0..4 {
+    let image_name = format!("low_res_image{}.png",i);
+    let _ = send_image_to_client(&src_addr, &image_name);
+    thread::sleep(Duration::from_millis(200));
+    }
+    //waiting for other client to choose image:
+    let (size, src_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
+    let id = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
+    let encoded_image_path = format!("encoded_image{}.png", id);
+
+
+
+    let views = "3";
+    socket.send_to(&views.as_bytes(), src_addr).expect("Failed to send image
+    views");
+    let _ = send_image_to_client(&src_addr, &encoded_image_path);
+}
+}
+*/
 pub fn send_my_img () {
     let imgs_port: i32 = 9999;
     let mut buffer = [0; 512];
@@ -552,6 +671,7 @@ pub fn send_my_img () {
         
         if view_msg == "view all".to_string() {
             
+            println!("view request from {}!", src_addr);
             send_message(&socket, &src_addr, "ACK");
             // send dynamic port to handle comminication
             for i in 0..2 {
@@ -563,11 +683,28 @@ pub fn send_my_img () {
             let (size, src_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
             let id: String = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
             
-            let encoded_image_path = format!("encrypted_image{}.png", id);
+            println!("received id {}", id);
+            //encoding chosen image 
+
+             // Load the cover image 
+             // let cover_image_path = "cover.png";
+             // let cover_image = image::open(cover_image_path).expect("Failed to open cover image");
+     
+            //  // Load the secret image 
+             // let secret_image_path=format!("image{}.png",id);
+             // let secret_image = image::open(secret_image_path).expect("Failed to open secret image");
+
+            //  // Embed the secret image within the cover image
+            // //  let encoded_image = encodeimage(cover_image, secret_image);
+     
+            //  // Save the encoded image to a file
+              let encoded_image_path = format!("encrypted_image{}.png", id);
             //  encoded_image.save(encoded_image_path.clone()).expect("Failed to save encoded image");
 
             let views = "3";
+            println!("will send # views");
             socket.send_to(&views.as_bytes(), src_addr).expect("Failed to send image views");
+            println!("will send image");
             let _ = send_image_to_client(&src_addr, &encoded_image_path);
         }
     }
@@ -638,6 +775,7 @@ pub fn request_img_from_client (friend_addr: SocketAddr, servers: [&str; 3],reco
     println!("SENT ID");
     let mut buffer = [0; 512]; 
     let (size, friend_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
+    // TODO: store in the hashmap mutex
     let view_msg = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
     
     let img_name = "encrypted_image.png";
@@ -657,9 +795,12 @@ pub fn request_img_from_client (friend_addr: SocketAddr, servers: [&str; 3],reco
     let mut records_guard = records.lock().unwrap();
     records_guard.insert((friend_addr, id.to_string()), view_msg.parse::<i32>().unwrap());
 
+    println!("stored final image");
     let records_clone = Arc::clone(&records);
     drop(records_guard);
+    println!("after clone");
     let (_, view) = check_num_of_views(friend_addr, id.to_string(), records_clone,extracted_image_path.clone());
+    println!("{}",view);
 
     thread::sleep(Duration::from_millis(500));
 }
@@ -691,4 +832,60 @@ pub fn check_num_of_views(
 {
     println!("inside check");
     let mut records = records.lock().unwrap();
-    let key_exists = records.contains_key(&(ip
+    let key_exists = records.contains_key(&(ip, id.clone()));
+    if key_exists {
+        let mut views =  records.get(&(ip, id.clone())).cloned().unwrap();
+
+        println!("views {}", views);
+        if views > 0 {
+            let save_path = extracted_image_path; // Adjust the path as needed
+            Command::new("xdg-open").arg(save_path).spawn().expect("Failed to open image");
+
+            views -= 1;
+            records.insert((ip, id), views);
+            return (true, views);
+        }
+        else {
+            match fs::remove_file(&extracted_image_path) {
+                Ok(_) => {
+                    println!("Image is deleted");
+                    if let Some(value) = records.remove(&(ip, id.clone())) {
+                        println!("Removed from your album");
+                    }
+                },
+                Err(e) => println!("Error deleting file: {}", e),
+            }
+        }
+    }
+    (false,0)
+}
+
+pub fn update_access(records: Arc<Mutex<HashMap<(SocketAddr, String), i32>>>)  {
+    loop{
+        let mut buffer = [0; 512]; 
+        let socket = UdpSocket::bind(format!("0.0.0.0:1111")).expect("Failed to bind socket");
+        let (size, src_addr) = socket.recv_from(&mut buffer).expect("Failed to receive message");
+        let ackm="ACK";
+        socket.send_to(ackm.as_bytes(),src_addr);
+        let id_views = str::from_utf8(&buffer[..size]).unwrap().trim().to_string();
+        let id_views: Vec<String> = id_views.split('_')
+                                  .map(|s| s.to_string())
+                                  .collect();
+
+        let mut records_guard = records.lock().unwrap();
+             let new_addr = SocketAddr::new(src_addr.ip(), 9999);
+        let key_exists = records_guard.contains_key(&(new_addr, id_views[0].clone()));
+        println!("{}",key_exists);
+        println!("{},{}",id_views[0].clone(), id_views[1]);
+        if key_exists{
+            records_guard.insert((new_addr, id_views[0].clone()), id_views[1].parse::<i32>().unwrap());
+        }
+        else {
+            println!("Image not found");
+            continue;
+        }
+
+        thread::sleep(Duration::from_secs(2 as u64));
+
+    }
+}
